@@ -18,12 +18,14 @@ Description: Used for iso tailoring at the rpm package level
 import argparse
 import fcntl
 import os
+from tabnanny import verbose
 import tempfile
 import subprocess
 import signal
 import xml.etree.cElementTree as ET
 import shlex
 import traceback
+import re
 
 # 工具清单
 NECESSARY_TOOLS = (
@@ -80,6 +82,8 @@ class IConfig(object):
         self.cache_path = "/var/run/isocut"
         self.yum_conf = self.cache_path + "/yum.conf"
         self.repo_conf = self.cache_path + "/repo.d/isocut.repo"
+        self.product_xml = None
+        self.verbose = False
         self.mkdir_flag = False
         self.src_iso = None
         self.dest_iso = None
@@ -105,6 +109,8 @@ class IConfig(object):
 
     @classmethod
     def run_cmd(cls, cmd):
+        if ICONFIG.verbose:
+            print(cmd)
         cmd = shlex.split(cmd)
         res = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         sout = res.communicate()
@@ -136,7 +142,6 @@ def parse_old_treeinfo():
     #treeinfo文件第3行为version信息
     version_line = treeinfo_content[3].strip()
     ICONFIG.old_version_number = version_line.split('=')[1].strip()
-
     #treeinfo文件第6行为arch信息
     version_line = treeinfo_content[6].strip()
     ICONFIG.src_iso_arch = version_line.split('=')[1].strip()
@@ -203,20 +208,24 @@ def check_input():
     parser.add_argument("dest_iso", help="destination iso image")
     parser.add_argument("-temp", metavar="temporary_workspace", default="/tmp", help="temporary path")
     parser.add_argument("-rpms", metavar="rpm_path", help="extern rpm packages path")
+    parser.add_argument("-xml", metavar="product_xml", help="provide a anaconda product.xml and disable rpmlist")
     parser.add_argument("-install_pic", metavar="install_picture_path", help="install bg picture path")
     parser.add_argument("-kickstart", metavar="kickstart_file_path", help="kickstart file path")
     parser.add_argument("-product", metavar="product_name", help="product name")
     parser.add_argument("-version", metavar="version_number", help="version number")
+    parser.add_argument("-verbose", action='store_true', default=False, help="print all cmdline")
 
     args = parser.parse_args()
     ICONFIG.src_iso = args.source_iso
     ICONFIG.dest_iso = args.dest_iso
     ICONFIG.temp_path = args.temp
     ICONFIG.rpm_path = args.rpms
+    ICONFIG.product_xml = args.xml
     ICONFIG.install_pic_path = args.install_pic
     ICONFIG.ks_file = args.kickstart
     ICONFIG.input_product_name = args.product
     ICONFIG.input_version_number = args.version
+    ICONFIG.verbose = args.verbose
 
     if ICONFIG.src_iso is None or ICONFIG.dest_iso is None:
         print("Must specify source iso image and destination iso image")
@@ -227,6 +236,7 @@ def check_input():
         return 3
 
     if ICONFIG.rpm_path is not None:
+        print("RPM path is setted")
         if not os.path.exists(ICONFIG.rpm_path):
             print("RPM path do not exist!!")
             return 3
@@ -364,14 +374,20 @@ def select_rpm():
     ret = create_repo_conf()
     if ret != 0:
         return 5
-
-    rpm_list_file = open(ICONFIG.config_rpm_list, "r+")
     rpm_list = ""
-    for line in rpm_list_file:
-        if not (line is None or line.strip() == ""):
-            rpm_list += " %s" % line[:-1].strip()
-    cmd = "dnf download -y --releasever 22.03-lts-sp2 --resolve --alldeps -c {0} --installroot {1} --destdir {2}/{3} {4}".format(
-        ICONFIG.yum_conf, ICONFIG.cache_path, ICONFIG.temp_path_new_image, EXCLUDE_DIR_PACKAGES, rpm_list)
+    if ICONFIG.product_xml is None:
+        rpm_list_file = open(ICONFIG.config_rpm_list, "r+")
+        for line in rpm_list_file:
+            if not (line is None or line.strip() == ""):
+                rpm_list += " %s" % line[:-1].strip()
+    else:
+        with open(ICONFIG.product_xml, 'r') as file:
+            xml_content = file.read()
+            package_names = re.findall(r'<packagereq type="mandatory">(.*?)</packagereq>', xml_content)
+            rpm_list = ' '.join(package_names)
+    cmd = "dnf download -y --resolve --alldeps -c {0} --installroot {1} --destdir {2}/{3} --releasever {4} {5}".format(
+        ICONFIG.yum_conf, ICONFIG.cache_path, ICONFIG.temp_path_new_image, EXCLUDE_DIR_PACKAGES, 
+        ICONFIG.old_version_number ,rpm_list)
     ret = ICONFIG.run_cmd(cmd)
     if ret[0] != 0 or "conflicting requests" in ret[1]:
         print("Select rpm failed!!")
@@ -399,46 +415,60 @@ def indent(elem, level=0):
 
 def regen_repodata():
     product_xml = ICONFIG.temp_path_new_image + \
-        "/" + EXCLUDE_DIR_REPODATA + "/product.xml"
-    tree = ET.parse(ICONFIG.config_repodata_template)
-    root = tree.getroot()
-    packlist = root.find('group/packagelist')
-    if packlist is None:
-        print("Can't find packagelist, illegal template!!")
-        return 6
-    with open(ICONFIG.config_rpm_list) as fp_rpm:
-        for line in fp_rpm:
-            if line is None or line.strip() == "":
-                continue
-            pack = ET.SubElement(packlist, 'packagereq', type='default')
-            pack.text = line[:-1].strip()
-            if os.uname()[-1].strip() == 'x86_64':
-                pack.text = pack.text.split(".x86_64")[0]
-            elif os.uname()[-1].strip() == 'aarch64':
-                pack.text = pack.text.split(".aarch64")[0]
-            elif os.uname()[-1].strip() == 'loongarch64':
-                pack.text = pack.text.split(".loongarch64")[0]
-            pack.text = pack.text.split(".noarch")[0]
-        fp_rpm.close()
+    "/" + EXCLUDE_DIR_REPODATA + "/product.xml"
+    if ICONFIG.product_xml is None:
+        tree = ET.parse(ICONFIG.config_repodata_template)
+        root = tree.getroot()
+        packlist = root.find('group/packagelist')
+        if packlist is None:
+            print("Can't find packagelist, illegal template!!")
+            return 6
+        with open(ICONFIG.config_rpm_list) as fp_rpm:
+            for line in fp_rpm:
+                if line is None or line.strip() == "":
+                    continue
+                pack = ET.SubElement(packlist, 'packagereq', type='default')
+                pack.text = line[:-1].strip()
+                if os.uname()[-1].strip() == 'x86_64':
+                    pack.text = pack.text.split(".x86_64")[0]
+                elif os.uname()[-1].strip() == 'aarch64':
+                    pack.text = pack.text.split(".aarch64")[0]
+                elif os.uname()[-1].strip() == 'loongarch64':
+                    pack.text = pack.text.split(".loongarch64")[0]
+                pack.text = pack.text.split(".noarch")[0]
+            fp_rpm.close()
 
-    indent(root)
-    tree.write(product_xml, encoding="UTF-8", xml_declaration=True)
-    with open(product_xml, 'r+') as f_product:
-        contents = f_product.readlines()
-        contents.insert(1,
-                        "<!DOCTYPE comps\n  PUBLIC '-//Huawei "
-                        "Technologies Co. Ltd.//DTD Comps info//EN'\n  'comps.dtd'>\n")
-        contents_str = "".join(contents)
-        f_product.seek(0, 0)
-        f_product.write(contents_str)
-        f_product.close()
-    cmd = "createrepo -g {0} {1}".format(product_xml, ICONFIG.temp_path_new_image)
-    ret = ICONFIG.run_cmd(cmd)
-    if ret[0] != 0:
-        print("Regenerate repodata failed!!")
-        print(ret[1])
-        return 6
-
+        indent(root)
+        tree.write(product_xml, encoding="UTF-8", xml_declaration=True)
+        with open(product_xml, 'r+') as f_product:
+            contents = f_product.readlines()
+            contents.insert(1,
+                            "<!DOCTYPE comps\n  PUBLIC '-//Huawei "
+                            "Technologies Co. Ltd.//DTD Comps info//EN'\n  'comps.dtd'>\n")
+            contents_str = "".join(contents)
+            f_product.seek(0, 0)
+            f_product.write(contents_str)
+            f_product.close()
+        cmd = "createrepo -g {0} {1}".format(product_xml, ICONFIG.temp_path_new_image)
+        ret = ICONFIG.run_cmd(cmd)
+        if ret[0] != 0:
+            print("Regenerate repodata failed!!")
+            print(ret[1])
+            return 6
+    else:
+        with open(ICONFIG.product_xml, 'r+') as f_product:
+            contents = f_product.readlines()
+            contents_str = "".join(contents)
+            with open(product_xml, 'w+') as tmp_product:
+                tmp_product.seek(0, 0)
+                tmp_product.write(contents_str)
+                tmp_product.close()
+        cmd = "createrepo -g {0} {1}".format(ICONFIG.product_xml, ICONFIG.temp_path_new_image)
+        ret = ICONFIG.run_cmd(cmd)
+        if ret[0] != 0:
+            print("createrepo_with_product_xml failed!!")
+            print(ret[1])
+            return 6
     return 0
 
 # 检查裁剪的ISO所需的rpm包的依赖关系
@@ -681,6 +711,8 @@ def add_checksum():
     return 0
 
 def add_sha256sum():
+    cmd = "chmod 777 {0}".format(ICONFIG.dest_iso)
+    ret = ICONFIG.run_cmd(cmd)
     cmd = "sha256sum {0}".format(ICONFIG.dest_iso)
     ret = ICONFIG.run_cmd(cmd)
     if ret[0] != 0:
@@ -793,6 +825,7 @@ def main():
     return 0
 
 def signal_handler():
+    print('signal_handler')
     do_clean()
 
 signal.signal(signal.SIGINT, signal_handler)
