@@ -370,9 +370,8 @@ def select_rpm():
     for line in rpm_list_file:
         if not (line is None or line.strip() == ""):
             rpm_list += " %s" % line[:-1].strip()
-    cmd = "yumdownloader -y --resolve -c {0} --installroot {1} --destdir {2}/{3} {4}".format(
-        ICONFIG.yum_conf, ICONFIG.cache_path, ICONFIG.temp_path_new_image,
-        EXCLUDE_DIR_PACKAGES, rpm_list)
+    cmd = "dnf download -y --releasever 22.03-lts-sp2 --resolve --alldeps -c {0} --installroot {1} --destdir {2}/{3} {4}".format(
+        ICONFIG.yum_conf, ICONFIG.cache_path, ICONFIG.temp_path_new_image, EXCLUDE_DIR_PACKAGES, rpm_list)
     ret = ICONFIG.run_cmd(cmd)
     if ret[0] != 0 or "conflicting requests" in ret[1]:
         print("Select rpm failed!!")
