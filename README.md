@@ -1,5 +1,50 @@
 # oemaker
 
+I updated the isocut to build a custom ISO image. And you will be happy to provide a `product.xml` instead of a `rpmlist` to make your anaconda special. See the demo `product.xml` in `isocut`.
+
+## quick start
+
+You don't need to build this project to rpm package, just download it and put `isocut/isocut.py` to somewhere and run it. But you should better to run `dnf install isocut` to install official isocut to generate the configurations or dirs. You also can replace that `/usr/bin/isocut` with `isocut.py`(don't forget to rename it and chmod +x) from this repo.
+
+```
+./isocut -h
+Checking input ...
+usage: isocut [-h] [-temp temporary_workspace] [-rpms rpm_path] [-xml product_xml] [-install_pic install_picture_path]
+              [-kickstart kickstart_file_path] [-product product_name] [-version version_number] [-verbose]
+              source_iso dest_iso
+
+Cut openEuler iso to small one
+
+positional arguments:
+  source_iso            source iso image
+  dest_iso              destination iso image
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -temp temporary_workspace
+                        temporary path
+  -rpms rpm_path        extern rpm packages path
+  -xml product_xml      provide a anaconda product.xml and disable rpmlist
+  -install_pic install_picture_path
+                        install bg picture path
+  -kickstart kickstart_file_path
+                        kickstart file path
+  -product product_name
+                        product name
+  -version version_number
+                        version number
+  -verbose              print all cmdline
+
+```
+example
+```
+./isocut -t /home/openeuler/isocut_tmp/ -x /home/openeuler/product.xml -r /home/openeuler/usr_rpms/ -verbose /mnt/hgfs/vm/openEuler-22.03-LTS-SP2-everything-x86_64-dvd.iso  /home/openeuler/ukui.iso
+```
+
+-----------------------------------------------------------------
+
+# doc from openeuler
+
 #### Description
 
 The source package `oemaker` has three functions: ISO making and splitting and compile_env making. Accordingly, three software packages are generated: `oemaker` and `isocut` and `envmaker`.
