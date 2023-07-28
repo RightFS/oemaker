@@ -12,13 +12,14 @@ PURPOSE.
 See the Mulan PSL v2 for more details.
 Author: zhuchunyi
 Create: 2021-03-17
-Description: Used for iso tailoring at the rpm package level
+Description: Used for iso tailoring at the rpm package level.
+
+Updated by Octopus at 2023-07-26 : add product.xml support
 """
 
 import argparse
 import fcntl
 import os
-from tabnanny import verbose
 import tempfile
 import subprocess
 import signal
@@ -208,7 +209,7 @@ def check_input():
     parser.add_argument("dest_iso", help="destination iso image")
     parser.add_argument("-temp", metavar="temporary_workspace", default="/tmp", help="temporary path")
     parser.add_argument("-rpms", metavar="rpm_path", help="extern rpm packages path")
-    parser.add_argument("-xml", metavar="product_xml", help="provide a anaconda product.xml and disable rpmlist")
+    parser.add_argument("-xml", metavar="product_xml", help="provide an anaconda product.xml and disable rpmlist")
     parser.add_argument("-install_pic", metavar="install_picture_path", help="install bg picture path")
     parser.add_argument("-kickstart", metavar="kickstart_file_path", help="kickstart file path")
     parser.add_argument("-product", metavar="product_name", help="product name")
@@ -385,9 +386,10 @@ def select_rpm():
             xml_content = file.read()
             package_names = re.findall(r'<packagereq type="mandatory">(.*?)</packagereq>', xml_content)
             rpm_list = ' '.join(package_names)
-    cmd = "dnf download -y --resolve --alldeps -c {0} --installroot {1} --destdir {2}/{3} --releasever {4} {5}".format(
+    cmd = "dnf download -y --resolve --alldeps -c {0} --installroot {1} --destdir {2}/{3} \
+        --releasever {4} {5}".format(
         ICONFIG.yum_conf, ICONFIG.cache_path, ICONFIG.temp_path_new_image, EXCLUDE_DIR_PACKAGES, 
-        ICONFIG.old_version_number ,rpm_list)
+        ICONFIG.old_version_number, rpm_list)
     ret = ICONFIG.run_cmd(cmd)
     if ret[0] != 0 or "conflicting requests" in ret[1]:
         print("Select rpm failed!!")
@@ -415,7 +417,7 @@ def indent(elem, level=0):
 
 def regen_repodata():
     product_xml = ICONFIG.temp_path_new_image + \
-    "/" + EXCLUDE_DIR_REPODATA + "/product.xml"
+        "/" + EXCLUDE_DIR_REPODATA + "/product.xml"
     if ICONFIG.product_xml is None:
         tree = ET.parse(ICONFIG.config_repodata_template)
         root = tree.getroot()
@@ -711,7 +713,7 @@ def add_checksum():
     return 0
 
 def add_sha256sum():
-    cmd = "chmod 777 {0}".format(ICONFIG.dest_iso)
+    cmd = "chmod 666 {0}".format(ICONFIG.dest_iso)
     ret = ICONFIG.run_cmd(cmd)
     cmd = "sha256sum {0}".format(ICONFIG.dest_iso)
     ret = ICONFIG.run_cmd(cmd)
@@ -724,6 +726,7 @@ def add_sha256sum():
     return 0
 
 def do_clean():
+    print('Clean intermediate file...')
     cmd = "umount {old}".format(old=ICONFIG.temp_path_old_image)
     ret = ICONFIG.run_cmd(cmd)
     if ret[0] != 0:
@@ -825,7 +828,6 @@ def main():
     return 0
 
 def signal_handler():
-    print('signal_handler')
     do_clean()
 
 signal.signal(signal.SIGINT, signal_handler)
